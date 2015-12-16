@@ -5,25 +5,54 @@ import pygame_sdl2.gfxdraw as pygamegfx
 import numpy as np
 pygame.init()
 
-size = width, height = 320, 240
+size = width, height = 640, 480
 middleScreen = int(width/2), int(height/2)
 velocity = [0, 0]
 black = 0, 0, 0
 red = 255, 0, 0
+green = 0, 255, 0
 white = 255, 255, 255
 
+
+# numpy additions
+class VectorTools():
+    def _normalise(self, vector):
+        if np.linalg.norm(vector) != 0:
+            return np.asarray(vector) / np.linalg.norm(vector)
+        else:
+            return vector
+
+
 # Models
-class Shape(object):
+# Base
+class Shape(VectorTools):
     def __init__(self, location, colour, velocity, size):
         if pygame.display.get_surface():
             self.screen = pygame.display.get_surface()
         else:
             self.screen = pygame.display.set_mode(size)
         self.location = np.array(location)
+        self.original_location = np.copy(location)
         self.colour = np.array(colour)
         self.velocity = np.array(velocity)
+        self.original_velocity = np.copy(velocity)
         self.padding = np.array([2, 2])
         self.dead = False
+        self.direction = np.array([1, 0])
+        self.fix_orientation = False
+        self.boundary_counter = 1
+
+    def _rotate(self, theta):
+        return np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+
+    def re_orient(self, draw_points):
+        if np.asarray(self.velocity).any() and np.asarray(self.direction).any() and self.fix_orientation:
+            angle = self._normalise(self.direction).dot(self._normalise(self.velocity))/(np.linalg.norm(self.direction) * np.linalg.norm(self.velocity))
+            rotation_matrix = self._rotate(angle)
+            self.direction = np.copy(self.velocity)
+            return [rotation_matrix.dot(point) for point in draw_points]
+        else:
+            return draw_points
 
     def speed(self):
         return np.sqrt(sum(x**2 for x in self.velocity))
@@ -38,16 +67,26 @@ class Shape(object):
     def destroy(self):
         self.dead = True
 
+    def reset(self):
+        self.location = np.copy(self.original_location)
+        self.velocity = np.copy(self.original_velocity)
+
 class Ball(Shape):
     def __init__(self, radius, location,  colour, velocity, size=(640, 480)):
         Shape.__init__(self, location, colour, velocity, size)
 
         self.radius = np.asarray(radius)
         self.border = np.asarray([radius, radius]) + self.padding
-        self.draw()
+        self.area = np.pi * radius ** 2
+        self.density = 1
+        self.mass = self.area * self.density
 
     def _build_params(self):
         return (self.screen, *self.location, self.radius,  list(self.colour))
+
+    def dead_action(self):
+        return self
+
     def draw(self):
         pygamegfx.aacircle(*self._build_params())
 
@@ -58,6 +97,9 @@ class Rectangle(Shape):
         self.width = np.asarray(width)
         self.height = np.asarray(height)
         self.border = np.asarray([width/2, height/2]) + self.padding
+        self.area = self.width * self.height
+        self.density = 1
+        self.mass = self.area * self.density
 
     def _build_params(self):
         '''self.location gets shifted because i chose center and pygame likes top right edge'''
@@ -70,43 +112,69 @@ class Triangle(Shape):
     def __init__(self, top, left, right, location, colour, velocity, size=(680, 480)):
         Shape.__init__(self, location, colour, velocity, size)
 
-        self.top = top
-        self.left = left
-        self.right = right
-        self.border = np.array([abs(2 * left), abs(2 * top)])
+        self.top = top * np.array([0, 1])
+        self.left = left * np.array([-1, -1])
+        self.right = right * np.array([1, -1])
+        self.draw_points = [self.top, self.left, self.right]
+        self.border = np.array([abs(left), abs(top)])
+        self.area = 0.5 * (self.right - self.left)[0] * (self.top + self.right)[1]
+        self.density = 1
+        self.mass = self.area * self.density
 
     def _build_params(self):
-        return (self.screen, *(self.location + self.top * np.array([0, 1])), *(self.location + self.left * np.array([-1, -1])), *(self.location + self.right * np.array([1, -1])), list(self.colour))
+        self.draw_points = self.re_orient(self.draw_points)
+        self.top = self.location + self.draw_points[0]
+        self.left = self.location + self.draw_points[1]
+        self.right = self.location + self.draw_points[2]
+        return (self.screen, *self.top, *self.left, *self.right, list(self.colour))
 
     def draw(self):
-        pygamegfx.trigon(*self._build_params())
+        pygamegfx.aatrigon(*self._build_params())
 
+
+# Instantiations
 class Player(Triangle):
     def __init__(self, items, initial_position=middleScreen):
-        Triangle.__init__(self, -7, -5, -5, initial_position, red, [0, 0], size=(680, 480))
+        width = -12
+        height = -10
+        Triangle.__init__(self, height, width, width, initial_position, green, [0, 0], size=(680, 480))
         items.update({"player":self})
+        self.has_fired = False
         self.bullet_speed = 2
         self.items = items
         self.bullets = []
+        self.speed_tick = 3
+        self.fix_orientation = True
+        self.mass = 1000
 
     def fire_bullet(self):
-        bullet = Bullet(self)
+        self.has_fired = True
         if np.asarray(self.velocity).any():
-            bullet.velocity = np.asarray(self.velocity) * self.bullet_speed
+            bullet_velocity = np.asarray(self.velocity) * self.bullet_speed
         else:
-            bullet.velocity = self.bullet_speed * np.array([0, 1])
+            bullet_velocity = -self.bullet_speed * np.array([0, 1])
+        bullet = Bullet(self, bullet_velocity)
         self.bullets.append(bullet)
         return self.bullets
 
 class Bullet(Ball):
-    def __init__(self, player):
-        Ball.__init__(self, 2, player.location-player.top+5, red, player.velocity)
+    def __init__(self, player, bullet_velocity):
+        if np.asarray(player.velocity).any():
+            initial_location = np.asarray(player.location) + np.asarray(player.velocity) * 10
+        else:
+            initial_location = np.asarray(player.location) - np.array([0, 30])
+        Ball.__init__(self, 2, initial_location, red, bullet_velocity)
+        self.mass = 100
+
 
 # Controller
-class FrameWatcher():
-    def __init__(self):
+class Frame(VectorTools):
+    def __init__(self, view):
         self._check_screen()
         self.collisions = 0
+        self.clock = pygame.time.Clock()
+        self.view = view
+        self.walls = False
 
     def _check_screen(self):
         self.screen = pygame.display.get_surface()
@@ -114,68 +182,109 @@ class FrameWatcher():
         self.xmin, self.ymin = 0, 0
 
     def _distance(self, item_1, item_2):
-        return np.sqrt((item_1.location[0]-item_2.location[0])**2+(item_1.location[1]-item_2.location[1])**2)
+        return np.sqrt((item_1.location[0] - item_2.location[0])**2 + (item_1.location[1]-item_2.location[1])**2)
 
     def _displacement(self, item_1, item_2):
-        return item_1.location-item_2.location
+        return item_1.location - item_2.location
 
-    def _normalise(self, vector):
-        return np.asarray(vector)/np.sqrt(sum([x**2 for x in vector]))
-
-    def handle_collision(self, item_1, item_2):
+    def _handle_collision(self, item_1, item_2, view):
+        '''kill both items if either is a bullet (and neither is dead). Otherwise bounce'''
         self.collisions += 1
-        items_displacement = [d for d in self._displacement(item_1, item_2)]
-        new_velocity_1 = item_1.speed() * self._normalise(np.asarray(item_1.velocity) + np.asarray(items_displacement))
-        new_velocity_2 = item_2.speed() * self._normalise(np.asarray(item_2.velocity) - np.asarray(items_displacement))
-            # very hacky things here
-        item_1.velocity = [int(d) for d in 1 + (0.75 + np.random.random_sample() / 2) * new_velocity_1]
-        item_2.velocity = [int(d) for d in 1 + (0.75 + np.random.random_sample() / 2) * new_velocity_2]
+        if not (item_1.dead or item_2.dead):
+            if view["player"].has_fired:
+                if item_1 in view["bullets"] or item_2 in view["bullets"]:
+                    if item_1 in view["background"] or item_2 in view["background"]:
+                        item_1.dead = True
+                        item_2.dead = True
+            items_displacement = [d for d in self._displacement(item_1, item_2)]
+            new_velocity_1 = item_2.speed()*(item_2.mass/item_1.mass) * self._normalise(np.asarray(item_1.velocity) + np.asarray(items_displacement))
 
-    # def handle_coincidence(self, item_1, item_2):
-    #     pass
+            new_velocity_2 = item_1.speed()*(item_1.mass/item_2.mass) * self._normalise(np.asarray(item_2.velocity) - np.asarray(items_displacement))
+                # very hacky things here
+            item_1.velocity = [int(d) for d in 1 + (0.75 + np.random.random_sample() / 2) * new_velocity_1]
+            item_2.velocity = [int(d) for d in 1 + (0.75 + np.random.random_sample() / 2) * new_velocity_2]
 
-    def check(self, view, interactions=True, walls="hard", bullet=False):
+    def get_input(self):
+        ''' input loop'''
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                sys.exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                self.walls = self.walls is False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == K_RIGHT:
+                    view["player"].velocity += np.array([view["player"].speed_tick, 0])
+                if event.key == K_LEFT:
+                    view["player"].velocity -= np.array([view["player"].speed_tick, 0])
+                if event.key == K_UP:
+                    view["player"].velocity -= np.array([0, view["player"].speed_tick])
+                if event.key == K_DOWN:
+                    view["player"].velocity +=np.array([0, view["player"].speed_tick])
+                if event.key == K_SPACE:
+                    view.update({"bullets": view["player"].fire_bullet()})
+
+    def check(self, view, framerate=60, walls="hard", interactions=True):
         # Initialisations
         items = [item for item in view.data]
         locations = [item.location for item in items]
+
         # Check Boundaries
         if walls is "hard":
             for item in items:
                 x, y = item.location
                 xmin, ymin = np.array([self.xmin, self.ymin]) + item.border + item.padding
                 xlim, ylim = np.array([self.xlim, self.ylim]) - item.border - item.padding
+                item.bounced = True
                 if x > xlim or x < xmin:
                     item.velocity[0] = -item.velocity[0]
-                if y > ylim or y < ymin:
+                    item.location += np.asarray(item.velocity)
+                    if x > xlim or x < xmin:
+                        item.boundary_counter += 1
+                        if item.boundary_counter > 100:
+                            item.boundary_counter = 0
+                            item.reset()
+                elif y > ylim or y < ymin:
                     item.velocity[1] = -item.velocity[1]
+                    item.location += np.asarray(item.velocity)
+                    if y > ylim or y < ymin:
+                        item.boundary_counter += 1
+                        if item.boundary_counter > 100:
+                            item.boundary_counter = 0
+                            item.reset()
+                else:
+                    item.bounced = False
+
         elif walls is "soft":
             for item in items:
                 x, y = item.location
                 xmin, ymin = np.array([self.xmin, self.ymin]) + item.border + item.padding
                 xlim, ylim = np.array([self.xlim, self.ylim]) - item.border - item.padding
+                item.bounced = True
                 if x > xlim:
                     item.location = item.location - np.array([self.xlim, 0])
-                if x < xmin:
+                elif x < xmin:
                     item.location = item.location + np.array([self.xlim, 0])
-                if y > ylim:
+                elif y > ylim:
                     item.location = item.location - np.array([0, self.ylim])
-                if y < ymin:
+                elif y < ymin:
                     item.location = item.location + np.array([0, self.ylim])
+                else:
+                    item.bounced = False
 
         if interactions:
-            # Check Collisions
+            # Detect Collisions
             for current_location in enumerate(locations):
                 current_item = items[current_location[0]]
                 for other_location in enumerate(locations):
                     other_item = items[other_location[0]]
                     if not current_item == other_item:
-                        if self._distance(current_item, other_item) < 2*max(current_item.border) and self._distance(current_item, other_item) > max(current_item.border):
-                            self.handle_collision(current_item, other_item)
-                        # elif self._distance(current_item, other_item) < max(current_item.border):
-                        #     self.handle_coincidence(current_item, other_item)
+                        if self._distance(current_item, other_item) < 2 * max(current_item.border) and self._distance(current_item, other_item) > max(current_item.border):
+                            self._handle_collision(current_item, other_item, view)
+        self.clock.tick(framerate)
+
 
 # View
-class ViewArray():
+class View(VectorTools):
     def __init__(self, n_balls, n_rects, n_triangles):
 
         balls = [Ball(10, np.random.randint(10, 100, 2), white, [i, j]) for i,j in zip([np.random.randint(-5, 5) for _ in range (1, n_balls+1)], [np.random.randint(-5, 5) for _ in range(1, n_balls+1)])]
@@ -199,62 +308,55 @@ class ViewArray():
             return False
 
     def __getitem__(self, key):
-        '''assume key is a tuple of type, then number'''
         if key == "player":
             return self.dict["player"][0]
-        return self.dict[key[0]][key[1]]
+        return self.dict[key]
+
+    def add_player(self):
+        '''add player to list'''
+        self.has_player = True
+        self.player = Player(self.dict)
+        self.update({"player":[self.player]})
+
 
     def update(self, dict_items=None):
         '''called whenever draw data needs to be updated'''
         if dict_items:
             self.dict.update(dict_items)
             self.data = [datum for row in self.dict.values() for datum in row]
-
+            self.dead_data = (elem for elem in self.data if elem.dead)
+            self.data = [elem for elem in self.data if not elem.dead]
+            def dead_action(x):
+                return [elem.dead_action() for elem in x] + [elem.dead_action() for elem in x]
+            reborn = dead_action(self.dead_data)
+            print(list(reborn))
+            for lazarus in reborn:
+                lazarus.dead = False
+                self.data.append(lazarus)
 
     def draw(self):
         '''executed on each game loop'''
         self.data[0].screen.fill(black)
         for object in self.data:
-            object.move()
+            if not object.dead:
+                object.move()
+        pygame.display.flip()
 
-    def add_player(self):
-        '''player is not in a list because there can be only one'''
-        self.has_player = True
-        self.player = Player(self.dict)
-        self.update({"player":[self.player]})
 
-# Initializations
-view = ViewArray(2, 0, 0)
+# Build the View, start the controller
+view = View(1, 0, 0)
 view.add_player()
-b = FrameWatcher()
-walls = False
-
+frame = Frame(view)
 
 # Game loop
 while 1:
-    for event in pygame.event.get():
-        if event.type == QUIT:
-            sys.exit()
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            walls = walls is False
-        elif event.type == pygame.KEYDOWN:
-            if event.key == K_RIGHT:
-                view["player"].velocity += np.array([1, 0])
-            if event.key == K_LEFT:
-                view["player"].velocity -= np.array([1, 0])
-            if event.key == K_UP:
-                view["player"].velocity -= np.array([0, 1])
-            if event.key == K_DOWN:
-                view["player"].velocity +=np.array([0, 1])
-            if event.key == K_SPACE:
-                view.update({"bullets": view["player"].fire_bullet()})
+    frame.get_input()
 
     view.draw()
 
-    if walls:
-        b.check(view, walls="soft")
+    if frame.walls:
+        frame.check(view, walls="soft")
     else:
-        b.check(view, walls="hard")
+        frame.check(view, walls="hard")
 
-    pygame.display.flip()
 
