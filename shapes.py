@@ -3,6 +3,7 @@ import sys
 from pygame_sdl2.locals import *
 import pygame_sdl2.gfxdraw as pygamegfx
 import numpy as np
+import copy
 pygame.init()
 
 size = width, height = 640, 480
@@ -15,7 +16,7 @@ white = 255, 255, 255
 
 
 # numpy additions
-class VectorTools():
+class VectorTools(object):
     def _normalise(self, vector):
         if np.linalg.norm(vector) != 0:
             return np.asarray(vector) / np.linalg.norm(vector)
@@ -77,15 +78,31 @@ class Ball(Shape):
 
         self.radius = np.asarray(radius)
         self.border = np.asarray([radius, radius]) + self.padding
-        self.area = np.pi * radius ** 2
+        self.calculate_mass()
+        self.re_born_counter = 0
+
+    def calculate_mass(self):
+        self.area = np.pi * self.radius ** 2
         self.density = 1
         self.mass = self.area * self.density
 
     def _build_params(self):
         return (self.screen, *self.location, self.radius,  list(self.colour))
 
-    def dead_action(self):
-        return self
+    def dead_action(self, duplicate=True):
+        self.radius = 0.5*self.radius
+        self.calculate_mass()
+        if self.re_born_counter < 2:
+            self.re_born_counter += 1
+            if duplicate:
+                copy1 = copy.copy(self)
+                copy1.location = self.location+ np.array([10, 10])
+                return [self, copy1]
+            else:
+                return self
+        else:
+            return None
+
 
     def draw(self):
         pygamegfx.aacircle(*self._build_params())
@@ -136,7 +153,7 @@ class Triangle(Shape):
 class Player(Triangle):
     def __init__(self, items, initial_position=middleScreen):
         width = -12
-        height = -10
+        height = -4
         Triangle.__init__(self, height, width, width, initial_position, green, [0, 0], size=(680, 480))
         items.update({"player":self})
         self.has_fired = False
@@ -323,23 +340,25 @@ class View(VectorTools):
         '''called whenever draw data needs to be updated'''
         if dict_items:
             self.dict.update(dict_items)
-            self.data = [datum for row in self.dict.values() for datum in row]
-            self.dead_data = (elem for elem in self.data if elem.dead)
-            self.data = [elem for elem in self.data if not elem.dead]
-            def dead_action(x):
-                return [elem.dead_action() for elem in x] + [elem.dead_action() for elem in x]
-            reborn = dead_action(self.dead_data)
-            print(list(reborn))
-            for lazarus in reborn:
+        self.data = [datum for row in self.dict.values() for datum in row]
+        self.dead_data = (elem for elem in self.data if elem.dead)
+        self.data = [elem for elem in self.data if not elem.dead]
+        for lazarus in self.dead_data:
+            if not isinstance(lazarus, Bullet):
                 lazarus.dead = False
-                self.data.append(lazarus)
+                self.data.append(lazarus.dead_action())
+                self.dict["background"]+=lazarus.dead_action()
+        # flatten & filter data
+        self.data = [elem for sublist in [np.atleast_1d(x) for x in list(filter(None,  self.data))] for elem in sublist]
+        self.draw()
 
     def draw(self):
         '''executed on each game loop'''
         self.data[0].screen.fill(black)
         for object in self.data:
-            if not object.dead:
-                object.move()
+            if object:
+                if not object.dead:
+                    object.move()
         pygame.display.flip()
 
 
