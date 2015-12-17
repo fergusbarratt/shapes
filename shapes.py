@@ -16,17 +16,24 @@ white = 255, 255, 255
 
 
 # numpy additions
-class VectorTools(object):
+class Tools(object):
     def _normalise(self, vector):
         if np.linalg.norm(vector) != 0:
             return np.asarray(vector) / np.linalg.norm(vector)
         else:
             return vector
 
+    def _flatten(self, vector):
+        return [elem for sublist in [vector] for elem in sublist]
+
+    def _check_screen(self):
+        self.screen = pygame.display.get_surface()
+        self.xlim, self.ylim = self.screen.get_size()
+        self.xmin, self.ymin = 0, 0
 
 # Models
 # Base
-class Shape(VectorTools):
+class Shape(Tools):
     def __init__(self, location, colour, velocity, size):
         if pygame.display.get_surface():
             self.screen = pygame.display.get_surface()
@@ -42,6 +49,7 @@ class Shape(VectorTools):
         self.direction = np.array([1, 0])
         self.fix_orientation = False
         self.boundary_counter = 1
+        self.mass = 100
 
     def _rotate(self, theta):
         return np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
@@ -68,6 +76,9 @@ class Shape(VectorTools):
     def destroy(self):
         self.dead = True
 
+    def dead_action(self):
+        return [  ]
+
     def reset(self):
         self.location = np.copy(self.original_location)
         self.velocity = np.copy(self.original_velocity)
@@ -89,8 +100,8 @@ class Ball(Shape):
     def _build_params(self):
         return (self.screen, *self.location, self.radius,  list(self.colour))
 
-    def dead_action(self, duplicate=True):
-        self.radius = 0.5*self.radius
+    def dead_action(self, duplicate=False):
+        self.radius = 0.5 * self.radius
         self.calculate_mass()
         if self.re_born_counter < 2:
             self.re_born_counter += 1
@@ -99,7 +110,7 @@ class Ball(Shape):
                 copy1.location = self.location+ np.array([10, 10])
                 return [self, copy1]
             else:
-                return self
+                return [self]
         else:
             return None
 
@@ -108,32 +119,42 @@ class Ball(Shape):
         pygamegfx.aacircle(*self._build_params())
 
 class Rectangle(Shape):
-    def __init__(self, width, height, location, colour, velocity, size=(320, 240)):
+    def __init__(self, width, height, location, colour, velocity, size=(640, 480)):
         Shape.__init__(self, location, colour, velocity, size)
 
-        self.width = np.asarray(width)
-        self.height = np.asarray(height)
-        self.border = np.asarray([width/2, height/2]) + self.padding
+        self.width = np.array(width)
+        self.height = np.array(height)
+        self.border = np.array([width/2, height/2]) + self.padding
+        self.calculate_mass()
+        self.fix_orientation = True
+        self.draw_points = [np.array([self.width/2, self.height/2]), np.array([self.width/2, -self.height/2]), np.array([-self.width/2, -self.height/2]), np.array([-self.width/2, self.height/2])]
+
+    def calculate_mass(self):
         self.area = self.width * self.height
         self.density = 1
         self.mass = self.area * self.density
 
     def _build_params(self):
-        '''self.location gets shifted because i chose center and pygame likes top right edge'''
-        return (self.screen, pygame.Rect(*(np.array(self.location)-np.array([self.width/2, self.height/2])), self.width, self.height), list(self.colour))
+        self.draw_points = self.re_orient(self.draw_points)
+        points = [self.location + point for point in self.draw_points]
+        return (self.screen, points, list(self.colour))
 
     def draw(self):
-        pygamegfx.rectangle(*self._build_params())
+        pygamegfx.aapolygon(*self._build_params())
 
 class Triangle(Shape):
     def __init__(self, top, left, right, location, colour, velocity, size=(680, 480)):
         Shape.__init__(self, location, colour, velocity, size)
 
         self.top = top * np.array([0, 1])
+        self.fix_orientation = True
         self.left = left * np.array([-1, -1])
         self.right = right * np.array([1, -1])
         self.draw_points = [self.top, self.left, self.right]
         self.border = np.array([abs(left), abs(top)])
+        self.filled = False
+
+    def calculate_mass(self):
         self.area = 0.5 * (self.right - self.left)[0] * (self.top + self.right)[1]
         self.density = 1
         self.mass = self.area * self.density
@@ -146,23 +167,28 @@ class Triangle(Shape):
         return (self.screen, *self.top, *self.left, *self.right, list(self.colour))
 
     def draw(self):
-        pygamegfx.aatrigon(*self._build_params())
+        if self.filled:
+            pygamegfx.filled_trigon(*self._build_params())
+        else:
+            pygamegfx.aatrigon(*self._build_params())
 
 
 # Instantiations
 class Player(Triangle):
     def __init__(self, items, initial_position=middleScreen):
-        width = -12
-        height = -4
+        width = -10
+        height = -10
         Triangle.__init__(self, height, width, width, initial_position, green, [0, 0], size=(680, 480))
         items.update({"player":self})
+        self.direction = np.asarray([1, 0])
         self.has_fired = False
         self.bullet_speed = 2
         self.items = items
         self.bullets = []
         self.speed_tick = 3
         self.fix_orientation = True
-        self.mass = 1000
+        self.mass = 100
+        self.filled = True
 
     def fire_bullet(self):
         self.has_fired = True
@@ -185,7 +211,7 @@ class Bullet(Ball):
 
 
 # Controller
-class Frame(VectorTools):
+class Frame(Tools):
     def __init__(self, view):
         self._check_screen()
         self.collisions = 0
@@ -301,19 +327,19 @@ class Frame(VectorTools):
 
 
 # View
-class View(VectorTools):
+class View(Tools):
     def __init__(self, n_balls, n_rects, n_triangles):
 
         balls = [Ball(10, np.random.randint(10, 100, 2), white, [i, j]) for i,j in zip([np.random.randint(-5, 5) for _ in range (1, n_balls+1)], [np.random.randint(-5, 5) for _ in range(1, n_balls+1)])]
-
-        rects = [Rectangle(20, 20, np.random.randint(10, 100, 2), white, [i, j]) for i,j in zip([np.random.randint(-5, 5) for _ in range (1, n_rects+1)], [np.random.randint(-5, 5) for _ in range(1, n_rects+1)])]
+        # width, height, location, colour, velocity
+        rects = [Rectangle(13, 13, np.random.randint(10, 100, 2), white, [i, j]) for i,j in zip([np.random.randint(-5, 5) for _ in range (1, n_rects+1)], [np.random.randint(-5, 5) for _ in range(1, n_rects+1)])]
+        print(rects[0].velocity)
 
         tris = [Triangle(10, 10, 10, np.random.randint(10, 100, 2), white, [i, j]) for i,j in zip([np.random.randint(-5, 5) for _ in range (1, n_triangles+1)], [np.random.randint(-5, 5) for _ in range(1, n_triangles+1)])]
 
         self.dict = {"background": balls+rects+tris}
         self.data = [datum for row in self.dict.values() for datum in row]
         self.has_player = False
-        self.n_bullets = 0
 
     def __iter__(self):
         return self.dict.__iter__()
@@ -350,7 +376,6 @@ class View(VectorTools):
                 self.dict["background"]+=lazarus.dead_action()
         # flatten & filter data
         self.data = [elem for sublist in [np.atleast_1d(x) for x in list(filter(None,  self.data))] for elem in sublist]
-        self.draw()
 
     def draw(self):
         '''executed on each game loop'''
@@ -363,7 +388,7 @@ class View(VectorTools):
 
 
 # Build the View, start the controller
-view = View(1, 0, 0)
+view = View(20, 20, 20)
 view.add_player()
 frame = Frame(view)
 
