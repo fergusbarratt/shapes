@@ -52,13 +52,22 @@ class Shape(Tools):
         self.mass = 100
 
     def _rotate(self, theta):
-        return np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+        return np.array([[np.cos(theta), -np.sin(theta)], 
+                         [np.sin(theta),  np.cos(theta)]])
 
     def re_orient(self, draw_points):
-        if np.asarray(self.velocity).any() and np.asarray(self.direction).any() and self.fix_orientation:
-            angle = self._normalise(self.direction).dot(self._normalise(self.velocity))/(np.linalg.norm(self.direction) * np.linalg.norm(self.velocity))
+        """rotates so that self angle and self velocity are parellel
+           angle is dot product of self direction and self velocity"""
+        if np.asarray(self.velocity).any() and \
+           np.asarray(self.direction).any() and \
+           self.fix_orientation:
+            angle = np.acos(
+                    self._normalise(self.direction).dot(
+                    self._normalise(self.velocity))/(
+                    np.linalg.norm(self.direction) * \
+                    np.linalg.norm(self.velocity)))
             rotation_matrix = self._rotate(angle)
-            self.direction = np.copy(self.velocity)
+            self.direction = self._normalise(np.copy(self.velocity))
             return [rotation_matrix.dot(point) for point in draw_points]
         else:
             return draw_points
@@ -77,16 +86,24 @@ class Shape(Tools):
         self.dead = True
 
     def dead_action(self):
-        return [  ]
+        return []
 
     def reset(self):
         self.location = np.copy(self.original_location)
         self.velocity = np.copy(self.original_velocity)
 
 class Ball(Shape):
-    def __init__(self, radius, location,  colour, velocity, size=(640, 480)):
-        Shape.__init__(self, location, colour, velocity, size)
-
+    def __init__(self, 
+                 radius, 
+                 location,  
+                 colour, 
+                 velocity, 
+                 size=(640, 480)):
+        Shape.__init__(self, 
+                       location, 
+                       colour, 
+                       velocity, 
+                       size)
         self.radius = np.asarray(radius)
         self.border = np.asarray([radius, radius]) + self.padding
         self.calculate_mass()
@@ -114,20 +131,31 @@ class Ball(Shape):
         else:
             return None
 
-
     def draw(self):
         pygamegfx.aacircle(*self._build_params())
 
 class Rectangle(Shape):
-    def __init__(self, width, height, location, colour, velocity, size=(640, 480)):
-        Shape.__init__(self, location, colour, velocity, size)
-
+    def __init__(self, 
+                 width, 
+                 height, 
+                 location, 
+                 colour, 
+                 velocity, 
+                 size=(640, 480)):
+        Shape.__init__(self, 
+                       location, 
+                       colour, 
+                       velocity, 
+                       size)
         self.width = np.array(width)
         self.height = np.array(height)
         self.border = np.array([width/2, height/2]) + self.padding
         self.calculate_mass()
         self.fix_orientation = True
-        self.draw_points = [np.array([self.width/2, self.height/2]), np.array([self.width/2, -self.height/2]), np.array([-self.width/2, -self.height/2]), np.array([-self.width/2, self.height/2])]
+        self.draw_points = [np.array([self.width/2, self.height/2]), 
+                            np.array([self.width/2, -self.height/2]), 
+                            np.array([-self.width/2, -self.height/2]), 
+                            np.array([-self.width/2, self.height/2])]
 
     def calculate_mass(self):
         self.area = self.width * self.height
@@ -143,9 +171,19 @@ class Rectangle(Shape):
         pygamegfx.aapolygon(*self._build_params())
 
 class Triangle(Shape):
-    def __init__(self, top, left, right, location, colour, velocity, size=(680, 480)):
-        Shape.__init__(self, location, colour, velocity, size)
-
+    def __init__(self, 
+                 top, 
+                 left, 
+                 right, 
+                 location, 
+                 colour, 
+                 velocity, 
+                 size=(680, 480)):
+        Shape.__init__(self, 
+                       location, 
+                       colour, 
+                       velocity, 
+                       size)
         self.top = top * np.array([0, 1])
         self.fix_orientation = True
         self.left = left * np.array([-1, -1])
@@ -155,7 +193,8 @@ class Triangle(Shape):
         self.filled = False
 
     def calculate_mass(self):
-        self.area = 0.5 * (self.right - self.left)[0] * (self.top + self.right)[1]
+        self.area = 0.5 * (self.right - self.left)[0] * \
+                          (self.top +  self.right)[1]
         self.density = 1
         self.mass = self.area * self.density
 
@@ -164,7 +203,11 @@ class Triangle(Shape):
         self.top = self.location + self.draw_points[0]
         self.left = self.location + self.draw_points[1]
         self.right = self.location + self.draw_points[2]
-        return (self.screen, *self.top, *self.left, *self.right, list(self.colour))
+        return (self.screen, 
+                *self.top, 
+                *self.left, 
+                *self.right, 
+                list(self.colour))
 
     def draw(self):
         if self.filled:
@@ -178,7 +221,14 @@ class Player(Triangle):
     def __init__(self, items, initial_position=middleScreen):
         width = -10
         height = -10
-        Triangle.__init__(self, height, width, width, initial_position, green, [0, 0], size=(680, 480))
+        Triangle.__init__(self, 
+                          height, 
+                          width, 
+                          width, 
+                          initial_position, 
+                          green, 
+                          [0, 0], 
+                          size=(680, 480))
         items.update({"player":self})
         self.direction = np.asarray([1, 0])
         self.has_fired = False
@@ -203,7 +253,8 @@ class Player(Triangle):
 class Bullet(Ball):
     def __init__(self, player, bullet_velocity):
         if np.asarray(player.velocity).any():
-            initial_location = np.asarray(player.location) + np.asarray(player.velocity) * 10
+            initial_location = np.asarray(player.location) + \
+                               np.asarray(player.velocity) * 10
         else:
             initial_location = np.asarray(player.location) - np.array([0, 30])
         Ball.__init__(self, 2, initial_location, red, bullet_velocity)
@@ -225,27 +276,37 @@ class Frame(Tools):
         self.xmin, self.ymin = 0, 0
 
     def _distance(self, item_1, item_2):
-        return np.sqrt((item_1.location[0] - item_2.location[0])**2 + (item_1.location[1]-item_2.location[1])**2)
+        return np.sqrt((item_1.location[0] - item_2.location[0])**2 + \
+                       (item_1.location[1] - item_2.location[1])**2 )
 
     def _displacement(self, item_1, item_2):
         return item_1.location - item_2.location
 
     def _handle_collision(self, item_1, item_2, view):
-        '''kill both items if either is a bullet (and neither is dead). Otherwise bounce'''
+        '''kill both items if either is a bullet (and neither is dead). 
+        Otherwise bounce'''
         self.collisions += 1
         if not (item_1.dead or item_2.dead):
-            if view["player"].has_fired:
-                if item_1 in view["bullets"] or item_2 in view["bullets"]:
-                    if item_1 in view["background"] or item_2 in view["background"]:
-                        item_1.dead = True
-                        item_2.dead = True
+            if view.has_player:
+                if view["player"].has_fired:
+                    if item_1 in view["bullets"] or item_2 in view["bullets"]:
+                        if item_1 in view["background"] or \
+                           item_2 in view["background"]:
+                            item_1.dead = True
+                            item_2.dead = True
             items_displacement = [d for d in self._displacement(item_1, item_2)]
-            new_velocity_1 = item_2.speed()*(item_2.mass/item_1.mass) * self._normalise(np.asarray(item_1.velocity) + np.asarray(items_displacement))
+            new_velocity_1 = item_2.speed()*(item_2.mass/item_1.mass) * \
+                    self._normalise(np.asarray(item_1.velocity) + 
+                                    np.asarray(items_displacement))
 
-            new_velocity_2 = item_1.speed()*(item_1.mass/item_2.mass) * self._normalise(np.asarray(item_2.velocity) - np.asarray(items_displacement))
+            new_velocity_2 = item_1.speed()*(item_1.mass/item_2.mass) * \
+                    self._normalise(np.asarray(item_2.velocity) - 
+                                    np.asarray(items_displacement))
                 # very hacky things here
-            item_1.velocity = [int(d) for d in 1 + (0.75 + np.random.random_sample() / 2) * new_velocity_1]
-            item_2.velocity = [int(d) for d in 1 + (0.75 + np.random.random_sample() / 2) * new_velocity_2]
+            item_1.velocity = [int(d) for d in 
+            1 + (0.75 + np.random.random_sample() / 2) * new_velocity_1]
+            item_2.velocity = [int(d) for d in 
+                    1 + (0.75 + np.random.random_sample() / 2) * new_velocity_2]
 
     def get_input(self):
         ''' input loop'''
@@ -256,13 +317,17 @@ class Frame(Tools):
                 self.walls = self.walls is False
             elif event.type == pygame.KEYDOWN:
                 if event.key == K_RIGHT:
-                    view["player"].velocity += np.array([view["player"].speed_tick, 0])
+                    view["player"].velocity += np.array(
+                                                [view["player"].speed_tick, 0])
                 if event.key == K_LEFT:
-                    view["player"].velocity -= np.array([view["player"].speed_tick, 0])
+                    view["player"].velocity -= np.array(
+                                                [view["player"].speed_tick, 0])
                 if event.key == K_UP:
-                    view["player"].velocity -= np.array([0, view["player"].speed_tick])
+                    view["player"].velocity -= np.array(
+                                                [0, view["player"].speed_tick])
                 if event.key == K_DOWN:
-                    view["player"].velocity +=np.array([0, view["player"].speed_tick])
+                    view["player"].velocity +=np.array(
+                                                [0, view["player"].speed_tick])
                 if event.key == K_SPACE:
                     view.update({"bullets": view["player"].fire_bullet()})
 
@@ -275,8 +340,10 @@ class Frame(Tools):
         if walls is "hard":
             for item in items:
                 x, y = item.location
-                xmin, ymin = np.array([self.xmin, self.ymin]) + item.border + item.padding
-                xlim, ylim = np.array([self.xlim, self.ylim]) - item.border - item.padding
+                xmin, ymin = np.array([self.xmin, self.ymin]) + \
+                        item.border + item.padding
+                xlim, ylim = np.array([self.xlim, self.ylim]) - \
+                        item.border - item.padding
                 item.bounced = True
                 if x > xlim or x < xmin:
                     item.velocity[0] = -item.velocity[0]
@@ -300,8 +367,10 @@ class Frame(Tools):
         elif walls is "soft":
             for item in items:
                 x, y = item.location
-                xmin, ymin = np.array([self.xmin, self.ymin]) + item.border + item.padding
-                xlim, ylim = np.array([self.xlim, self.ylim]) - item.border - item.padding
+                xmin, ymin = np.array([self.xmin, self.ymin]) + \
+                        item.border + item.padding
+                xlim, ylim = np.array([self.xlim, self.ylim]) - \
+                        item.border - item.padding
                 item.bounced = True
                 if x > xlim:
                     item.location = item.location - np.array([self.xlim, 0])
@@ -321,25 +390,34 @@ class Frame(Tools):
                 for other_location in enumerate(locations):
                     other_item = items[other_location[0]]
                     if not current_item == other_item:
-                        if self._distance(current_item, other_item) < 2 * max(current_item.border) and self._distance(current_item, other_item) > max(current_item.border):
-                            self._handle_collision(current_item, other_item, view)
+                        if self._distance(current_item, other_item) < \
+                                       2 * max(current_item.border) and \
+                           self._distance(current_item, other_item) > \
+                                           max(current_item.border):
+                            self._handle_collision(current_item, 
+                                                   other_item, 
+                                                   view)
         self.clock.tick(framerate)
 
 
 # View
 class View(Tools):
-    def __init__(self, n_balls, n_rects, n_triangles):
+    def __init__(self, n_balls, add_player=False):
 
-        balls = [Ball(10, np.random.randint(10, 100, 2), white, [i, j]) for i,j in zip([np.random.randint(-5, 5) for _ in range (1, n_balls+1)], [np.random.randint(-5, 5) for _ in range(1, n_balls+1)])]
-        # width, height, location, colour, velocity
-        rects = [Rectangle(13, 13, np.random.randint(10, 100, 2), white, [i, j]) for i,j in zip([np.random.randint(-5, 5) for _ in range (1, n_rects+1)], [np.random.randint(-5, 5) for _ in range(1, n_rects+1)])]
-        print(rects[0].velocity)
-
-        tris = [Triangle(10, 10, 10, np.random.randint(10, 100, 2), white, [i, j]) for i,j in zip([np.random.randint(-5, 5) for _ in range (1, n_triangles+1)], [np.random.randint(-5, 5) for _ in range(1, n_triangles+1)])]
-
-        self.dict = {"background": balls+rects+tris}
+        balls = [Ball(10, 
+                      np.random.randint(10, 100, 2), 
+                      white, 
+                      [i, j]) for i,j in zip(
+                          [np.random.randint(-5, 5) 
+                              for _ in range (1, n_balls+1)],
+                          [np.random.randint(-5, 5) 
+                              for _ in range(1, n_balls+1)])]
+        
+        self.dict = {"background": balls}
         self.data = [datum for row in self.dict.values() for datum in row]
         self.has_player = False
+        if add_player:
+            self.add_player()
 
     def __iter__(self):
         return self.dict.__iter__()
@@ -361,7 +439,6 @@ class View(Tools):
         self.player = Player(self.dict)
         self.update({"player":[self.player]})
 
-
     def update(self, dict_items=None):
         '''called whenever draw data needs to be updated'''
         if dict_items:
@@ -369,13 +446,10 @@ class View(Tools):
         self.data = [datum for row in self.dict.values() for datum in row]
         self.dead_data = (elem for elem in self.data if elem.dead)
         self.data = [elem for elem in self.data if not elem.dead]
-        for lazarus in self.dead_data:
-            if not isinstance(lazarus, Bullet):
-                lazarus.dead = False
-                self.data.append(lazarus.dead_action())
-                self.dict["background"]+=lazarus.dead_action()
         # flatten & filter data
-        self.data = [elem for sublist in [np.atleast_1d(x) for x in list(filter(None,  self.data))] for elem in sublist]
+        self.data = [elem for sublist in [
+            np.atleast_1d(x) for x in list(
+                filter(None,  self.data))] for elem in sublist]
 
     def draw(self):
         '''executed on each game loop'''
@@ -388,8 +462,7 @@ class View(Tools):
 
 
 # Build the View, start the controller
-view = View(20, 20, 20)
-view.add_player()
+view = View(3)
 frame = Frame(view)
 
 # Game loop
